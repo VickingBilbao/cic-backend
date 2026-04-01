@@ -109,14 +109,16 @@ await fastify.register(lgpdPlugin)            // adds headers + /lgpd/* endpoint
 // ---------------------------------------------------------------------------
 // Routes — all under /api/v1
 // ---------------------------------------------------------------------------
-const API = '/api/v1'
+const API  = '/api/v1'
 const CAMP = `${API}/campaigns`
 
-// Auth routes under /api/v1/auth (prefix includes /auth so routes become /api/v1/auth/login etc.)
+// Auth → /api/v1/auth/login, /api/v1/auth/refresh, etc.
 await fastify.register(authRoutes,          { prefix: `${API}/auth` })
-await fastify.register(campaignRoutes,      { prefix: API })
 
-// Campaign-scoped modules
+// Campaigns CRUD → /api/v1/campaigns, /api/v1/campaigns/:id
+await fastify.register(campaignRoutes,      { prefix: CAMP })
+
+// Campaign-scoped modules → /api/v1/campaigns/:id/dashboard, etc.
 await fastify.register(dashboardRoutes,     { prefix: CAMP })
 await fastify.register(demandasRoutes,      { prefix: CAMP })
 await fastify.register(configRoutes,        { prefix: CAMP })
