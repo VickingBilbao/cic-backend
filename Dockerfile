@@ -2,6 +2,7 @@
 # CIC Backend — Dockerfile
 # Multi-stage build: deps → production image
 # Node 22 Alpine (small + secure)
+# Build: 2026-04-01
 # =============================================================================
 
 # Stage 1: install dependencies
