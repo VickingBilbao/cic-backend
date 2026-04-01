@@ -1,0 +1,25 @@
+# Dependencies (re-installed in Docker)
+node_modules/
+
+# Environment files (never in image)
+.env
+.env.*
+!.env.example
+
+# Development
+*.log
+*.md
+.git/
+.gitignore
+
+# Scripts (not needed at runtime)
+scripts/conhecimento/
+
+# Test files
+*.test.js
+*.spec.js
+coverage/
+
+# OS
+.DS_Store
+Thumbs.db
