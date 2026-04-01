@@ -5,7 +5,7 @@
  * GET  /content/stream/:jobId → SSE com tokens em tempo real
  */
 
-import { enqueueTextJob, textQueueEvents, textQueue, getJobStatus } from '../queues/index.js'
+import { enqueueTextJob } from '../queues/index.js'
 import { generateStream } from '../services/claude.js'
 
 export default async function contentRoutes(fastify) {
