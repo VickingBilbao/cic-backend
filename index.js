@@ -3,8 +3,7 @@
  * Node 22 + Fastify 4
  *
  * Registra todos plugins, rotas e workers BullMQ.
- * Workers rodam in-process. Para produção com alta escala,
- * extraia workers para um processo separado com `--worker` flag.
+ * Workers só são iniciados se REDIS_URL estiver definido.
  */
 
 import 'dotenv/config'
@@ -64,14 +63,6 @@ import avatarRoutes       from './src/routes/avatar.js'
 import obsidianRoutes     from './src/routes/obsidian.js'
 import orgRoutes          from './src/routes/org.js'
 import sadminRoutes       from './src/routes/sadmin.js'
-
-// ---------------------------------------------------------------------------
-// Workers
-// ---------------------------------------------------------------------------
-import { startTextWorker }       from './src/workers/text.worker.js'
-import { startImageWorker }      from './src/workers/image.worker.js'
-import { startVideoWorker }      from './src/workers/video.worker.js'
-import { startMonitoringWorker } from './src/workers/monitoring.worker.js'
 
 // ---------------------------------------------------------------------------
 // Server factory
@@ -171,19 +162,33 @@ fastify.get('/api/v1/status', {
 }))
 
 // ---------------------------------------------------------------------------
-// BullMQ Workers — start after server is ready (Redis connection available)
+// BullMQ Workers — only start if REDIS_URL is configured
 // ---------------------------------------------------------------------------
-fastify.ready(err => {
+fastify.ready(async err => {
   if (err) { fastify.log.error(err); process.exit(1) }
 
-  const connection = fastify.redis
+  if (!process.env.REDIS_URL) {
+    fastify.log.warn('⚠️  REDIS_URL not set — BullMQ workers disabled (queue features unavailable)')
+    return
+  }
 
-  startTextWorker(connection)        // Claude text generation    (concurrency 3)
-  startImageWorker(connection)       // Gemini Nano Banana 2      (concurrency 2)
-  startVideoWorker(connection)       // HeyGen avatar video       (concurrency 1)
-  startMonitoringWorker(connection)  // Claude sentiment analysis  (concurrency 3)
+  try {
+    const { startTextWorker }       = await import('./src/workers/text.worker.js')
+    const { startImageWorker }      = await import('./src/workers/image.worker.js')
+    const { startVideoWorker }      = await import('./src/workers/video.worker.js')
+    const { startMonitoringWorker } = await import('./src/workers/monitoring.worker.js')
 
-  fastify.log.info('✅ All BullMQ workers started (text · image · video · monitoring)')
+    const connection = fastify.redis
+    if (typeof startTextWorker       === 'function') startTextWorker(connection)
+    if (typeof startImageWorker      === 'function') startImageWorker(connection)
+    if (typeof startVideoWorker      === 'function') startVideoWorker(connection)
+    if (typeof startMonitoringWorker === 'function') startMonitoringWorker(connection)
+
+    fastify.log.info('✅ All BullMQ workers started (text · image · video · monitoring)')
+  } catch (workerErr) {
+    fastify.log.error('Failed to start BullMQ workers:', workerErr.message)
+    // Do NOT exit — server continues without workers
+  }
 })
 
 // ---------------------------------------------------------------------------
