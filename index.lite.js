@@ -53,6 +53,8 @@ import mapaRoutes         from './src/routes/mapa.js'
 import estrategiaRoutes   from './src/routes/estrategia.js'
 import socialRoutes       from './src/routes/social.js'
 import obsidianRoutes     from './src/routes/obsidian.js'
+import orgRoutes          from './src/routes/org.js'
+import sadminRoutes       from './src/routes/sadmin.js'
 
 const fastify = Fastify({
   logger: {
@@ -101,6 +103,8 @@ await fastify.register(mapaRoutes,          { prefix: CAMP })
 await fastify.register(estrategiaRoutes,    { prefix: CAMP })
 await fastify.register(socialRoutes,        { prefix: CAMP })
 await fastify.register(obsidianRoutes,      { prefix: CAMP })
+await fastify.register(orgRoutes,           { prefix: `${API}/org` })
+await fastify.register(sadminRoutes,        { prefix: `${API}/sadmin` })
 
 fastify.get('/health', async () => ({
   status: 'ok', mode: 'lite',

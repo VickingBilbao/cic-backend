@@ -62,6 +62,8 @@ import avatarRoutes       from './src/routes/avatar.js'
 // Routes — Semana 4 (Polish + Live)
 // ---------------------------------------------------------------------------
 import obsidianRoutes     from './src/routes/obsidian.js'
+import orgRoutes          from './src/routes/org.js'
+import sadminRoutes       from './src/routes/sadmin.js'
 
 // ---------------------------------------------------------------------------
 // Workers
@@ -147,6 +149,8 @@ await fastify.register(socialRoutes,        { prefix: CAMP })
 await fastify.register(imageRoutes,         { prefix: CAMP })
 await fastify.register(avatarRoutes,        { prefix: CAMP })
 await fastify.register(obsidianRoutes,      { prefix: CAMP })
+await fastify.register(orgRoutes,           { prefix: `${API}/org` })
+await fastify.register(sadminRoutes,        { prefix: `${API}/sadmin` })
 
 // ---------------------------------------------------------------------------
 // Health check
