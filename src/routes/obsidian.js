@@ -438,72 +438,67 @@ Fases: Construção de base → Expansão → Intensificação → Reta final.`,
         }
 
         // ── 4. Gera notas estratégicas de conhecimento ─────────────────────
+        // NOTE: max_tokens=5000 para acomodar 8 notas com corpo de 1-2 parágrafos
         const notasRes = await anthropic.messages.create({
           model:      'claude-sonnet-4-6',
-          max_tokens: 3000,
-          system: 'Retorne SOMENTE JSON válido. Sem markdown.',
+          max_tokens: 5000,
+          system: 'Retorne SOMENTE JSON válido. Sem markdown. Seja conciso nos campos "corpo" (máx 150 palavras cada).',
           messages: [{
             role: 'user',
             content: `Campanha: ${nome} | ${cargo} | ${cidade}-${estado} | ${partido}
 
-Gere 8 notas estratégicas de alto valor para a campanha. Cada nota é um insight estratégico, percepção de contexto, ou referência de conhecimento político. JSON:
-[{
-  "titulo": "...",
-  "corpo": "... (2-3 parágrafos detalhados com insights reais)",
-  "tags": ["tag1", "tag2", "tag3"]
-}]
+Gere 8 notas estratégicas para a campanha. JSON COMPACTO (corpo: máx 150 palavras):
+[{"titulo":"...","corpo":"...","tags":["...","...","..."]}]
 
-Temas para cobrir:
-1. Contexto político de ${cidade}/${estado}
-2. Perfil do eleitor de ${cargo}
-3. Mensagem central recomendada
-4. Estratégia de comunicação digital
-5. Pontos críticos de vulnerabilidade
-6. Oportunidades não exploradas
-7. Modelo de engajamento comunitário
-8. Benchmarks de campanhas vencedoras similares`,
+Temas: 1.Contexto político ${cidade}/${estado} 2.Perfil eleitor ${cargo} 3.Mensagem central 4.Comunicação digital 5.Vulnerabilidades 6.Oportunidades 7.Engajamento comunitário 8.Benchmarks`,
           }],
         })
 
-        const notasData = JSON.parse(notasRes.content[0].text.replace(/```json\n?|\n?```/g, '').trim())
-        if (Array.isArray(notasData)) {
-          await supabase.from('obsidian_notas').insert(
-            notasData.map(n => ({
-              campaign_id: cid,
-              titulo: n.titulo,
-              corpo: n.corpo,
-              tags: n.tags || [],
-              gerada_ia: true,
-            }))
-          )
+        try {
+          const notasData = JSON.parse(notasRes.content[0].text.replace(/```json\n?|\n?```/g, '').trim())
+          if (Array.isArray(notasData)) {
+            const { error: nErr } = await supabase.from('obsidian_notas').insert(
+              notasData.map(n => ({
+                campaign_id: cid,
+                titulo: n.titulo,
+                corpo: n.corpo,
+                tags: n.tags || [],
+                gerada_ia: true,
+              }))
+            )
+            if (nErr) console.error('[obsidian seed-ia] notas insert error:', nErr.message)
+            else console.log(`[obsidian seed-ia] notas inseridas: ${notasData.length}`)
+          }
+        } catch (parseErr) {
+          console.error('[obsidian seed-ia] notas JSON parse error:', parseErr.message)
         }
 
         // ── 5. Gera knowledge_chunks (base de referência geral) ────────────
+        // NOTE: max_tokens=5000 para acomodar 6 chunks densos
         const knowledgeRes = await anthropic.messages.create({
           model:      'claude-sonnet-4-6',
-          max_tokens: 3000,
-          system: 'Retorne SOMENTE JSON válido.',
+          max_tokens: 5000,
+          system: 'Retorne SOMENTE JSON válido. Seja conciso (content: máx 200 palavras cada).',
           messages: [{
             role: 'user',
             content: `Campanha: ${nome} | ${cargo} | ${cidade}-${estado}
 
-Gere 6 chunks de conhecimento estratégico de referência. JSON:
-[{
-  "title": "...",
-  "source": "Estratégia Política Brasileira",
-  "chapter": "...",
-  "content": "... (conteúdo denso, 3-4 parágrafos)",
-  "tags": ["...", "..."],
-  "tipo": "estrategia|comunicacao|contexto|referencia",
-  "relevancia": 7
-}]
+Gere 6 knowledge chunks estratégicos. JSON COMPACTO:
+[{"title":"...","source":"Estratégia Política Brasileira","chapter":1,"content":"...","tags":["..."],"tipo":"estrategia","relevancia":7}]
 
-Temas: marketing político, comunicação eleitoral, mobilização de base, análise de oponentes, gestão de crises, GOTV Brasil.`,
+Temas: marketing político, comunicação eleitoral, mobilização de base, análise de oponentes, gestão de crises, GOTV Brasil.
+IMPORTANTE: "chapter" deve ser número inteiro (1-6). "relevancia" deve ser número inteiro (1-10).`,
           }],
         })
 
-        const knowledgeData = JSON.parse(knowledgeRes.content[0].text.replace(/```json\n?|\n?```/g, '').trim())
-        if (Array.isArray(knowledgeData)) {
+        let knowledgeData
+        try {
+          knowledgeData = JSON.parse(knowledgeRes.content[0].text.replace(/```json\n?|\n?```/g, '').trim())
+        } catch (parseErr) {
+          console.error('[obsidian seed-ia] knowledge_chunks JSON parse error:', parseErr.message)
+          knowledgeData = []
+        }
+        if (Array.isArray(knowledgeData) && knowledgeData.length > 0) {
           const { error: kErr } = await supabase.from('knowledge_chunks').insert(
             knowledgeData.map((k, i) => ({
               campaign_id: cid,
