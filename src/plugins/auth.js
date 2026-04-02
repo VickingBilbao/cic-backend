@@ -9,7 +9,7 @@ async function authPlugin(fastify) {
       // Busca usuário no Supabase para confirmar que existe e está ativo
       const { data: user, error } = await fastify.supabase
         .from('profiles')
-        .select('id, email, org_id, role')
+        .select('id, email, org_id, role, is_super_admin')
         .eq('id', req.user.sub)
         .single()
 
