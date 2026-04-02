@@ -63,6 +63,13 @@ async function obsidianRoutes(fastify, opts) {
     const edges = []
     let edgeId  = 0
 
+    // Normaliza quadrante SWOT: trata plural legado (forcas→forca, etc.)
+    const normalizeQ = q => {
+      if (!q) return null
+      const map = { forcas: 'forca', fraquezas: 'fraqueza', oportunidades: 'oportunidade', ameacas: 'ameaca' }
+      return map[q] || q
+    }
+
     // Nó central: campanha
     nodes.push({
       id: `campaign-${cid}`, label: campaign.name ?? 'Campanha',
@@ -79,12 +86,16 @@ async function obsidianRoutes(fastify, opts) {
 
     // SWOT
     const swotColors = { forca: '#10b981', fraqueza: '#ef4444', oportunidade: '#3b82f6', ameaca: '#f97316' }
-    ;(swot.data ?? []).forEach(s => nodes.push({
-      id: `swot-${s.id}`,
-      label: (s.descricao ?? '').slice(0, 55) + ((s.descricao?.length ?? 0) > 55 ? '…' : ''),
-      type: `swot_${s.quadrante}`, weight: 3,
-      color: swotColors[s.quadrante] ?? '#94a3b8', tags: [],
-    }))
+    ;(swot.data ?? []).forEach(s => {
+      const q = normalizeQ(s.quadrante)
+      if (!q) return // skip rows with null quadrante
+      nodes.push({
+        id: `swot-${s.id}`,
+        label: (s.descricao ?? '').slice(0, 55) + ((s.descricao?.length ?? 0) > 55 ? '…' : ''),
+        type: `swot_${q}`, weight: 3,
+        color: swotColors[q] ?? '#94a3b8', tags: [],
+      })
+    })
 
     // Conteúdos aprovados
     ;(conteudos.data ?? []).forEach(c => nodes.push({
@@ -182,7 +193,7 @@ async function obsidianRoutes(fastify, opts) {
     })
 
     // SWOT → estratégia (forças/oportunidades conectam a fases)
-    ;(swot.data ?? []).filter(s => ['forca','oportunidade'].includes(s.quadrante)).forEach(s => {
+    ;(swot.data ?? []).filter(s => ['forca','oportunidade'].includes(normalizeQ(s.quadrante))).forEach(s => {
       ;(estrategia.data ?? []).slice(0, 2).forEach(e => {
         edges.push({ id: `e-${edgeId++}`, source: `swot-${s.id}`, target: `estrategia-${e.id}`, weight: 2, type: 'fundamenta' })
       })
@@ -493,18 +504,20 @@ Temas: marketing político, comunicação eleitoral, mobilização de base, aná
 
         const knowledgeData = JSON.parse(knowledgeRes.content[0].text.replace(/```json\n?|\n?```/g, '').trim())
         if (Array.isArray(knowledgeData)) {
-          await supabase.from('knowledge_chunks').insert(
+          const { error: kErr } = await supabase.from('knowledge_chunks').insert(
             knowledgeData.map((k, i) => ({
               campaign_id: cid,
               title:       k.title,
               source:      k.source || 'Estratégia Política Brasileira',
-              chapter:     typeof k.chapter === 'number' ? k.chapter : (i + 1), // chapter is integer
+              chapter:     parseInt(k.chapter) || (i + 1), // chapter must be integer
               content:     k.content,
               tags:        Array.isArray(k.tags) ? k.tags : [],
               tipo:        k.tipo || 'estrategia',
-              relevancia:  typeof k.relevancia === 'number' ? k.relevancia : 7,
+              relevancia:  parseInt(k.relevancia) || 7,
             }))
           )
+          if (kErr) console.error('[obsidian seed-ia] knowledge_chunks insert error:', kErr.message, kErr.details)
+          else console.log(`[obsidian seed-ia] knowledge_chunks inseridos: ${knowledgeData.length}`)
         }
 
         // ── 6. Gera decisões estratégicas iniciais ─────────────────────────
