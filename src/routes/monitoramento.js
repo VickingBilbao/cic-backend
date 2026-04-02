@@ -7,7 +7,10 @@ import Anthropic from '@anthropic-ai/sdk'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-// ── Analisa sentimento de um texto via Claude Haiku (rápido/barato)
+// Mapeia sentimento PT (do Claude) → EN (padrão do banco)
+const sentimentoToEN = { positivo: 'positive', negativo: 'negative', neutro: 'neutral', misto: 'neutral' }
+
+// ── Analisa sentimento via Claude Haiku (rápido/barato)
 async function analisarSentimento(texto, candidato) {
   try {
     const res = await anthropic.messages.create({
@@ -17,18 +20,19 @@ async function analisarSentimento(texto, candidato) {
 Retorne SOMENTE JSON válido: { sentimento, score, topicos, urgente, resumo }
 - sentimento: "positivo" | "negativo" | "neutro" | "misto"
 - score: número de -1.0 a +1.0
-- topicos: array de strings com temas identificados (max 5)
-- urgente: boolean (true se for crítico/crise/denúncia)
-- resumo: string de 1 frase resumindo o conteúdo`,
-      messages: [{
-        role: 'user',
-        content: `Candidato: ${candidato}\n\nTexto: ${texto.slice(0, 1500)}`
-      }]
+- topicos: array de strings com temas (max 5)
+- urgente: boolean (true se crítico/crise/denúncia)
+- resumo: 1 frase resumindo o conteúdo`,
+      messages: [{ role: 'user', content: `Candidato: ${candidato}\n\nTexto: ${texto.slice(0, 1500)}` }]
     })
     const raw = res.content[0].text.replace(/```json\n?|\n?```/g, '').trim()
-    return JSON.parse(raw)
+    const parsed = JSON.parse(raw)
+    return {
+      ...parsed,
+      sentimentoDB: sentimentoToEN[parsed.sentimento] || 'neutral', // valor para o DB
+    }
   } catch {
-    return { sentimento: 'neutro', score: 0, topicos: [], urgente: false, resumo: texto.slice(0, 100) }
+    return { sentimento: 'neutro', sentimentoDB: 'neutral', score: 0, topicos: [], urgente: false, resumo: texto.slice(0, 100) }
   }
 }
 
@@ -45,7 +49,6 @@ async function fetchGoogleNewsRSS(query, maxItems = 10) {
   if (!res.ok) throw new Error(`Google News RSS error: ${res.status}`)
   const xml = await res.text()
 
-  // Parse simples sem biblioteca externa
   const items = []
   const itemMatches = xml.matchAll(/<item>([\s\S]*?)<\/item>/g)
 
@@ -74,7 +77,6 @@ async function monitoramentoRoutes(fastify, opts) {
       .select('id, org_id, name, cargo, city, state')
       .eq('id', campaignId).single()
     if (!data) return null
-    // Super admins veem todas as campanhas
     const { data: profile } = await supabase
       .from('profiles').select('org_id, is_super_admin').eq('id', userId).single()
     if (!profile) return null
@@ -83,7 +85,7 @@ async function monitoramentoRoutes(fastify, opts) {
     return data
   }
 
-  // ── GET /campaigns/:id/monitoramento — lista eventos
+  // ── GET /campaigns/:id/monitoramento
   fastify.get('/:id/monitoramento', {
     onRequest: [fastify.authenticate],
     schema: {
@@ -110,17 +112,21 @@ async function monitoramentoRoutes(fastify, opts) {
       .order('created_at', { ascending: false })
       .range(request.query.offset, request.query.offset + (request.query.limite || 50) - 1)
 
-    if (request.query.sentimento) q = q.eq('sentiment', request.query.sentimento)
-    if (request.query.fonte)      q = q.eq('platform', request.query.fonte)
+    if (request.query.sentimento) {
+      // Aceita PT ou EN
+      const s = sentimentoToEN[request.query.sentimento] || request.query.sentimento
+      q = q.eq('sentiment', s)
+    }
+    if (request.query.fonte) q = q.eq('platform', request.query.fonte)
     if (request.query.urgente !== undefined) q = q.eq('urgente', request.query.urgente)
-    if (request.query.desde)      q = q.gte('created_at', request.query.desde)
+    if (request.query.desde) q = q.gte('created_at', request.query.desde)
 
     const { data, error } = await q
     if (error) return reply.status(500).send({ error: error.message })
     return { eventos: data || [] }
   })
 
-  // ── POST /campaigns/:id/monitoramento — insere evento manual
+  // ── POST /campaigns/:id/monitoramento — evento manual com análise automática
   fastify.post('/:id/monitoramento', {
     onRequest: [fastify.authenticate],
     schema: {
@@ -140,24 +146,22 @@ async function monitoramentoRoutes(fastify, opts) {
     if (!campaign) return reply.status(404).send({ error: 'Campanha não encontrada' })
 
     const { texto, fonte, url, autor, data_publicacao } = request.body
-
-    // Analisa sentimento automaticamente
     const analise = await analisarSentimento(texto, campaign.name)
 
     const { data, error } = await supabase
       .from('monitoring_events')
       .insert({
-        campaign_id:     campaign.id,
-        content:         texto,
-        platform:        fonte ?? 'manual',
+        campaign_id:      campaign.id,
+        content:          texto,
+        platform:         fonte ?? 'manual',
         url,
         autor,
-        data_publicacao: data_publicacao ?? new Date().toISOString(),
-        sentiment:       analise.sentimento,
-        score_sentimento:analise.score,
-        topicos:         analise.topicos,
-        urgente:         analise.urgente,
-        resumo:          analise.resumo,
+        data_publicacao:  data_publicacao ?? new Date().toISOString(),
+        sentiment:        analise.sentimentoDB,
+        score_sentimento: analise.score,
+        topicos:          analise.topicos,
+        urgente:          analise.urgente,
+        resumo:           analise.resumo,
       })
       .select('id').single()
 
@@ -181,10 +185,9 @@ async function monitoramentoRoutes(fastify, opts) {
 
     const events = recent ?? []
     const counts = {
-      positivo: events.filter(e => e.sentiment === 'positivo').length,
-      negativo: events.filter(e => e.sentiment === 'negativo').length,
-      neutro:   events.filter(e => e.sentiment === 'neutro').length,
-      misto:    events.filter(e => e.sentiment === 'misto').length,
+      positivo: events.filter(e => e.sentiment === 'positive').length,
+      negativo: events.filter(e => e.sentiment === 'negative').length,
+      neutro:   events.filter(e => e.sentiment === 'neutral').length,
       urgentes: events.filter(e => e.urgente).length,
     }
 
@@ -202,14 +205,13 @@ async function monitoramentoRoutes(fastify, opts) {
     return { counts, topTopicos, avgScore: parseFloat(avgScore.toFixed(3)), total: events.length }
   })
 
-  // ── POST /campaigns/:id/monitoramento/analisar — analisa eventos pendentes com Claude
+  // ── POST /campaigns/:id/monitoramento/analisar — analisa eventos sem sentimento
   fastify.post('/:id/monitoramento/analisar', {
     onRequest: [fastify.authenticate],
   }, async (request, reply) => {
     const campaign = await getCampaign(request.params.id, request.user.id)
     if (!campaign) return reply.status(404).send({ error: 'Campanha não encontrada' })
 
-    // Busca eventos sem análise de sentimento
     const { data: pendentes } = await supabase
       .from('monitoring_events')
       .select('id, content')
@@ -217,16 +219,13 @@ async function monitoramentoRoutes(fastify, opts) {
       .is('sentiment', null)
       .limit(20)
 
-    if (!pendentes?.length) {
-      return { message: 'Nenhum evento pendente de análise', analisados: 0 }
-    }
+    if (!pendentes?.length) return { message: 'Nenhum evento pendente', analisados: 0 }
 
-    // Analisa em lote (com pausa para não estourar rate limit)
     let analisados = 0
     for (const evento of pendentes) {
       const analise = await analisarSentimento(evento.content, campaign.name)
       await supabase.from('monitoring_events').update({
-        sentiment:        analise.sentimento,
+        sentiment:        analise.sentimentoDB,
         score_sentimento: analise.score,
         topicos:          analise.topicos,
         urgente:          analise.urgente,
@@ -238,7 +237,7 @@ async function monitoramentoRoutes(fastify, opts) {
     return reply.status(202).send({ analisados, status: 'concluido' })
   })
 
-  // ── POST /campaigns/:id/monitoramento/buscar-news — Google News RSS (sem Apify!)
+  // ── POST /campaigns/:id/monitoramento/buscar-news — Google News RSS
   fastify.post('/:id/monitoramento/buscar-news', {
     onRequest: [fastify.authenticate],
     schema: {
@@ -254,44 +253,37 @@ async function monitoramentoRoutes(fastify, opts) {
     const campaign = await getCampaign(request.params.id, request.user.id)
     if (!campaign) return reply.status(404).send({ error: 'Campanha não encontrada' })
 
-    const keywords = request.body.keywords ?? [campaign.name, `${campaign.name} ${campaign.cargo}`]
-    const maxItems = request.body.maxItems ?? 10
-    const saved    = []
-    const errors   = []
+    const keywords = request.body?.keywords ?? [campaign.name, `${campaign.name} ${campaign.cargo}`]
+    const maxItems = request.body?.maxItems ?? 10
+    const saved = [], errors = []
 
     for (const kw of keywords.slice(0, 3)) {
       try {
         const items = await fetchGoogleNewsRSS(kw, maxItems)
 
         for (const item of items) {
-          const texto = `${item.title}. ${item.desc}`
-
-          // Verifica se já existe (evita duplicatas por URL)
           if (item.link) {
             const { data: existing } = await supabase
               .from('monitoring_events').select('id').eq('url', item.link).single()
             if (existing) continue
           }
 
+          const texto  = `${item.title}. ${item.desc}`
           const analise = await analisarSentimento(texto, campaign.name)
 
-          const { data: ev, error } = await supabase
-            .from('monitoring_events')
-            .insert({
-              campaign_id:      campaign.id,
-              content:          item.title,
-              platform:         'news',
-              url:              item.link || null,
-              autor:            item.source,
-              resumo:           item.desc?.slice(0, 300),
-              data_publicacao:  item.pubDate ? new Date(item.pubDate).toISOString() : new Date().toISOString(),
-              sentiment:        analise.sentimento,
-              score_sentimento: analise.score,
-              topicos:          analise.topicos,
-              urgente:          analise.urgente,
-            })
-            .select('id')
-            .single()
+          const { data: ev, error } = await supabase.from('monitoring_events').insert({
+            campaign_id:      campaign.id,
+            content:          item.title,
+            platform:         'news',
+            url:              item.link || null,
+            autor:            item.source,
+            resumo:           item.desc?.slice(0, 300),
+            data_publicacao:  item.pubDate ? new Date(item.pubDate).toISOString() : new Date().toISOString(),
+            sentiment:        analise.sentimentoDB,
+            score_sentimento: analise.score,
+            topicos:          analise.topicos,
+            urgente:          analise.urgente,
+          }).select('id').single()
 
           if (!error && ev) saved.push(ev.id)
         }
@@ -301,15 +293,12 @@ async function monitoramentoRoutes(fastify, opts) {
     }
 
     return {
-      salvos:   saved.length,
-      ids:      saved,
-      erros:    errors,
-      keywords,
-      message:  `${saved.length} eventos de notícias coletados e analisados`
+      salvos: saved.length, ids: saved, erros: errors, keywords,
+      message: `${saved.length} eventos coletados e analisados`
     }
   })
 
-  // ── POST /campaigns/:id/monitoramento/buscar — Apify (se configurado)
+  // ── POST /campaigns/:id/monitoramento/buscar — Apify ou fallback
   fastify.post('/:id/monitoramento/buscar', {
     onRequest: [fastify.authenticate],
   }, async (request, reply) => {
@@ -317,7 +306,6 @@ async function monitoramentoRoutes(fastify, opts) {
     if (!campaign) return reply.status(404).send({ error: 'Campanha não encontrada' })
 
     if (!process.env.APIFY_TOKEN) {
-      // Fallback para Google News RSS
       return reply.redirect(307, `/${request.params.id}/monitoramento/buscar-news`)
     }
 
@@ -328,11 +316,8 @@ async function monitoramentoRoutes(fastify, opts) {
     const res = await fetch(`https://api.apify.com/v2/acts/apify~google-search-scraper/runs?token=${token}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        queries: keywords.join('\n'),
-        maxPagesPerQuery: 1, resultsPerPage: 10,
-        webhooks: [{ eventTypes: ['ACTOR.RUN.SUCCEEDED'], requestUrl: webhookUrl }],
-      }),
+      body: JSON.stringify({ queries: keywords.join('\n'), maxPagesPerQuery: 1, resultsPerPage: 10,
+        webhooks: [{ eventTypes: ['ACTOR.RUN.SUCCEEDED'], requestUrl: webhookUrl }] }),
     })
 
     const json = await res.json()
@@ -340,7 +325,7 @@ async function monitoramentoRoutes(fastify, opts) {
     return reply.status(202).send({ apifyRunId: json.data?.id, status: 'running', keywords })
   })
 
-  // ── POST /campaigns/:id/monitoramento/webhook — Apify webhook
+  // ── POST /campaigns/:id/monitoramento/webhook
   fastify.post('/:id/monitoramento/webhook', {
     config: { skipAuth: true },
   }, async (request, reply) => {
@@ -353,8 +338,7 @@ async function monitoramentoRoutes(fastify, opts) {
     }
     const runId = request.body?.resource?.id ?? request.body?.actorRunId
     if (!runId) return reply.status(400).send({ error: 'Missing actor run ID' })
-    fastify.log.info(`[webhook] Apify run ${runId} for campaign ${request.params.id}`)
-    return { ok: true, message: 'Webhook recebido — processamento manual necessário (sem Redis)' }
+    return { ok: true }
   })
 
   // ── GET /campaigns/:id/monitoramento/alertas
@@ -382,12 +366,8 @@ async function monitoramentoRoutes(fastify, opts) {
   }, async (request, reply) => {
     const campaign = await getCampaign(request.params.id, request.user.id)
     if (!campaign) return reply.status(404).send({ error: 'Campanha não encontrada' })
-
     const { error } = await supabase.from('monitoring_events')
-      .update(request.body)
-      .eq('id', request.params.eventId)
-      .eq('campaign_id', campaign.id)
-
+      .update(request.body).eq('id', request.params.eventId).eq('campaign_id', campaign.id)
     if (error) return reply.status(500).send({ error: error.message })
     return { ok: true }
   })
@@ -411,7 +391,7 @@ async function monitoramentoRoutes(fastify, opts) {
     const byPlatform = {}
     for (const ev of (data || [])) {
       const p = ev.platform || 'outros'
-      if (!byPlatform[p]) byPlatform[p] = { total: 0, positivo: 0, negativo: 0, neutro: 0 }
+      if (!byPlatform[p]) byPlatform[p] = { total: 0, positive: 0, negative: 0, neutral: 0 }
       byPlatform[p].total++
       if (ev.sentiment) byPlatform[p][ev.sentiment] = (byPlatform[p][ev.sentiment] || 0) + 1
     }
@@ -430,7 +410,7 @@ async function monitoramentoRoutes(fastify, opts) {
       .from('monitoring_events')
       .select('id, platform, content, url, sentiment, score_sentimento, topicos, resumo, data_publicacao, urgente, autor')
       .eq('campaign_id', campaign.id)
-      .eq('sentiment', 'negativo')
+      .eq('sentiment', 'negative')
       .order('created_at', { ascending: false })
       .limit(30)
 
@@ -459,10 +439,7 @@ async function monitoramentoRoutes(fastify, opts) {
       .order('created_at', { ascending: false })
       .limit(30)
 
-    if (error) {
-      return { adversarios: [], total: 0 }
-    }
-
+    if (error) return { adversarios: [], total: 0 }
     return { adversarios: data || [], total: data?.length || 0 }
   })
 }
