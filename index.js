@@ -20,6 +20,7 @@ import supabasePlugin from './src/plugins/supabase.js'
 import redisPlugin    from './src/plugins/redis.js'
 import authPlugin     from './src/plugins/auth.js'
 import lgpdPlugin     from './src/plugins/lgpd.js'
+import seatsPlugin    from './src/plugins/seats.js'
 
 // ---------------------------------------------------------------------------
 // Routes — Semana 1 (Foundation)
@@ -105,6 +106,7 @@ await fastify.register(supabasePlugin)
 await fastify.register(redisPlugin)
 await fastify.register(authPlugin)
 await fastify.register(lgpdPlugin)            // adds headers + /lgpd/* endpoints
+await fastify.register(seatsPlugin)           // fastify.checkSeatsLimit(org_id)
 
 // ---------------------------------------------------------------------------
 // Routes — all under /api/v1
