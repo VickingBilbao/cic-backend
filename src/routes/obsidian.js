@@ -22,7 +22,7 @@ async function obsidianRoutes(fastify, opts) {
   async function getCampaign(campaignId, userId) {
     const { data } = await supabase
       .from('campaigns')
-      .select('id, org_id, name, city, state, cargo, partido, numero_urna')
+      .select('id, org_id, name, city, state, cargo')
       .eq('id', campaignId).single()
     if (!data) return null
     const { data: profile } = await supabase
