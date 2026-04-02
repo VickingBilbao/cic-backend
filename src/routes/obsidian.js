@@ -361,7 +361,8 @@ Seja específico para candidatos a ${cargo} no Brasil, contexto 2026.`,
         ]
         if (swotItems.length) {
           await supabase.from('swot_items').insert(
-            swotItems.map(s => ({ campaign_id: cid, ...s, tags: s.tags || [] }))
+            // swot_items: campaign_id, quadrante, descricao, peso (sem tags)
+            swotItems.map(s => ({ campaign_id: cid, quadrante: s.quadrante, descricao: s.descricao, peso: 5 }))
           )
         }
 
@@ -382,8 +383,14 @@ Considere: donas de casa, idosos, jovens, trabalhadores, comerciantes, etc. Adap
 
         const segData = JSON.parse(segRes.content[0].text.replace(/```json\n?|\n?```/g, '').trim())
         if (Array.isArray(segData)) {
+          // segmentos: campaign_id, nome, criterios (jsonb), total_eleitores
           await supabase.from('segmentos').insert(
-            segData.map(s => ({ campaign_id: cid, nome: s.nome, descricao: s.descricao, tags: s.tags || [] }))
+            segData.map(s => ({
+              campaign_id:    cid,
+              nome:           s.nome,
+              criterios:      { descricao: s.descricao, prioridade: s.prioridade, tamanho: s.tamanho_estimado, tags: s.tags || [] },
+              total_eleitores: 0,
+            }))
           )
         }
 
@@ -404,8 +411,13 @@ Fases: Construção de base → Expansão → Intensificação → Reta final.`,
 
         const timeData = JSON.parse(timeRes.content[0].text.replace(/```json\n?|\n?```/g, '').trim())
         if (Array.isArray(timeData)) {
+          // timeline_estrategia: campaign_id, semana (int), acoes (jsonb)
           await supabase.from('timeline_estrategia').insert(
-            timeData.map((t, i) => ({ campaign_id: cid, fase: t.fase, descricao: t.descricao, objetivos: t.objetivos || [], semana: (i + 1) * 10 }))
+            timeData.map((t, i) => ({
+              campaign_id: cid,
+              semana:      (i + 1) * 10,
+              acoes:       { fase: t.fase, descricao: t.descricao, objetivos: t.objetivos || [], periodo: t.periodo },
+            }))
           )
         }
 
@@ -477,15 +489,15 @@ Temas: marketing político, comunicação eleitoral, mobilização de base, aná
         const knowledgeData = JSON.parse(knowledgeRes.content[0].text.replace(/```json\n?|\n?```/g, '').trim())
         if (Array.isArray(knowledgeData)) {
           await supabase.from('knowledge_chunks').insert(
-            knowledgeData.map(k => ({
+            knowledgeData.map((k, i) => ({
               campaign_id: cid,
               title:       k.title,
-              source:      k.source,
-              chapter:     k.chapter,
+              source:      k.source || 'Estratégia Política Brasileira',
+              chapter:     typeof k.chapter === 'number' ? k.chapter : (i + 1), // chapter is integer
               content:     k.content,
-              tags:        k.tags || [],
+              tags:        Array.isArray(k.tags) ? k.tags : [],
               tipo:        k.tipo || 'estrategia',
-              relevancia:  k.relevancia || 7,
+              relevancia:  typeof k.relevancia === 'number' ? k.relevancia : 7,
             }))
           )
         }
@@ -507,13 +519,14 @@ Decisões sobre: posicionamento, tom de comunicação, foco geográfico, coliga�
 
         const decisoesData = JSON.parse(decisoesRes.content[0].text.replace(/```json\n?|\n?```/g, '').trim())
         if (Array.isArray(decisoesData)) {
+          // decisoes: campaign_id, titulo, contexto (not descricao), recomendacao_ia, status
           await supabase.from('decisoes').insert(
             decisoesData.map(d => ({
-              campaign_id: cid,
-              titulo:      d.titulo,
-              descricao:   d.descricao,
-              status:      'aprovada',
-              tags:        d.tags || [],
+              campaign_id:    cid,
+              titulo:         d.titulo,
+              contexto:       d.descricao || d.contexto || '',
+              recomendacao_ia: d.recomendacao || d.recomendacao_ia || d.descricao || '',
+              status:         'aprovada',
             }))
           )
         }
