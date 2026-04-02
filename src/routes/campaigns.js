@@ -5,12 +5,16 @@ export default async function campaignsRoutes(fastify) {
   fastify.get('/', {
     preHandler: [fastify.authenticate]
   }, async (req, reply) => {
-    const { data, error } = await fastify.supabase
+    let query = fastify.supabase
       .from('campaigns')
       .select('id, name, cargo, city, state, status, color, initials, created_at')
-      .eq('org_id', req.user.org_id)
       .order('created_at', { ascending: false })
 
+    if (!req.user.is_super_admin) {
+      query = query.eq('org_id', req.user.org_id)
+    }
+
+    const { data, error } = await query
     if (error) return reply.status(500).send({ error: error.message })
     return { campaigns: data }
   })
@@ -52,13 +56,16 @@ export default async function campaignsRoutes(fastify) {
   fastify.get('/:id', {
     preHandler: [fastify.authenticate]
   }, async (req, reply) => {
-    const { data, error } = await fastify.supabase
+    let query = fastify.supabase
       .from('campaigns')
       .select('*')
       .eq('id', req.params.id)
-      .eq('org_id', req.user.org_id)
-      .single()
 
+    if (!req.user.is_super_admin) {
+      query = query.eq('org_id', req.user.org_id)
+    }
+
+    const { data, error } = await query.single()
     if (error || !data) return reply.status(404).send({ error: 'Campanha não encontrada' })
     return { campaign: data }
   })
@@ -67,14 +74,16 @@ export default async function campaignsRoutes(fastify) {
   fastify.patch('/:id', {
     preHandler: [fastify.authenticate]
   }, async (req, reply) => {
-    const { data, error } = await fastify.supabase
+    let query = fastify.supabase
       .from('campaigns')
       .update(req.body)
       .eq('id', req.params.id)
-      .eq('org_id', req.user.org_id)
-      .select()
-      .single()
 
+    if (!req.user.is_super_admin) {
+      query = query.eq('org_id', req.user.org_id)
+    }
+
+    const { data, error } = await query.select().single()
     if (error) return reply.status(400).send({ error: error.message })
     return { campaign: data }
   })
@@ -83,12 +92,16 @@ export default async function campaignsRoutes(fastify) {
   fastify.delete('/:id', {
     preHandler: [fastify.requireRole('admin')]
   }, async (req, reply) => {
-    const { error } = await fastify.supabase
+    let query = fastify.supabase
       .from('campaigns')
       .update({ status: 'deleted', deleted_at: new Date() })
       .eq('id', req.params.id)
-      .eq('org_id', req.user.org_id)
 
+    if (!req.user.is_super_admin) {
+      query = query.eq('org_id', req.user.org_id)
+    }
+
+    const { error } = await query
     if (error) return reply.status(400).send({ error: error.message })
     return { message: 'Campanha removida com sucesso' }
   })
