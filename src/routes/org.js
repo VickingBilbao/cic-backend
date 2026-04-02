@@ -32,6 +32,13 @@ export default async function orgRoutes(fastify) {
 
     if (!config) return { theme: null }
 
+    // Garante que novos módulos estejam sempre disponíveis
+    const ALWAYS_AVAILABLE = ['obs']
+    const stored = config?.modules_enabled
+    const modules_enabled = stored
+      ? [...new Set([...stored, ...ALWAYS_AVAILABLE])]
+      : null  // null = todos liberados
+
     return {
       theme: {
         productName: config.product_name,
@@ -46,7 +53,7 @@ export default async function orgRoutes(fastify) {
         font:    config.font_family,
         fontUrl: config.font_url,
       },
-      modules_enabled:  config.modules_enabled || null,
+      modules_enabled,
       max_candidates:   config.max_candidates  || null,
       claude_model:     config.claude_model    || 'claude-sonnet-4-6',
     }
