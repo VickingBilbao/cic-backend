@@ -8,11 +8,13 @@
  *   POST   /:id/obsidian/nota        — Adicionar nota estratégica
  *   GET    /:id/obsidian/notas       — Listar notas
  *   DELETE /:id/obsidian/nota/:nid   — Deletar nota
- *   POST   /:id/obsidian/seed-ia     — Gerar base de conhecimento inicial com IA
+ *   POST   /:id/obsidian/seed-fc     — Carrega conhecimento real do FC (2° Cérebro)
+ *   POST   /:id/obsidian/seed-ia     — Gera análise AI da campanha específica
  */
 
 import Anthropic from '@anthropic-ai/sdk'
 import fp from 'fastify-plugin'
+import { FC_KNOWLEDGE_CHUNKS, FC_NOTAS_SEED } from './obsidian-fc-seed.js'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -313,6 +315,72 @@ async function obsidianRoutes(fastify, opts) {
     return reply.status(204).send()
   })
 
+  // ── POST /seed-fc — Carrega o Segundo Cérebro real de Fernando Carreiro ──
+  // Injeta os 14 knowledge_chunks permanentes (frameworks e modelos mentais do FC)
+  // e as 12 notas base (como FC pensa ao entrar em qualquer campanha).
+  // ?force=true para re-seed mesmo com dados existentes.
+  fastify.post('/:id/obsidian/seed-fc', {
+    onRequest: [fastify.authenticate],
+  }, async (request, reply) => {
+    const campaign = await getCampaign(request.params.id, request.user.id)
+    if (!campaign) return reply.status(404).send({ error: 'Campanha não encontrada' })
+
+    const cid = campaign.id
+    const force = request.query?.force === 'true'
+
+    // Verifica se já tem knowledge_chunks do FC
+    const { count: kCount } = await supabase
+      .from('knowledge_chunks')
+      .select('id', { count: 'exact', head: true })
+      .eq('campaign_id', cid)
+
+    if ((kCount || 0) >= 10 && !force) {
+      return { mensagem: 'Segundo Cérebro FC já carregado', pulado: true, chunks: kCount }
+    }
+
+    // force: limpa anterior
+    if (force) {
+      await supabase.from('knowledge_chunks').delete().eq('campaign_id', cid)
+      await supabase.from('obsidian_notas').delete().eq('campaign_id', cid).eq('gerada_ia', true)
+      console.log(`[seed-fc] force: limpando dados anteriores da campanha ${cid}`)
+    }
+
+    // 1. Insere os knowledge_chunks — frameworks permanentes do FC
+    const { error: kErr } = await supabase.from('knowledge_chunks').insert(
+      FC_KNOWLEDGE_CHUNKS.map(k => ({
+        campaign_id: cid,
+        title:       k.title,
+        source:      k.source,
+        chapter:     k.chapter,
+        content:     k.content,
+        tags:        k.tags,
+        tipo:        k.tipo,
+        relevancia:  k.relevancia,
+      }))
+    )
+    if (kErr) console.error('[seed-fc] knowledge_chunks error:', kErr.message)
+    else console.log(`[seed-fc] knowledge_chunks inseridos: ${FC_KNOWLEDGE_CHUNKS.length}`)
+
+    // 2. Insere as notas base — como FC pensa ao entrar em qualquer campanha
+    const { error: nErr } = await supabase.from('obsidian_notas').insert(
+      FC_NOTAS_SEED.map(n => ({
+        campaign_id: cid,
+        titulo:      n.titulo,
+        corpo:       n.corpo,
+        tags:        n.tags,
+        gerada_ia:   true,
+      }))
+    )
+    if (nErr) console.error('[seed-fc] notas error:', nErr.message)
+    else console.log(`[seed-fc] notas inseridas: ${FC_NOTAS_SEED.length}`)
+
+    return reply.status(201).send({
+      mensagem: 'Segundo Cérebro FC carregado com sucesso',
+      knowledge_chunks: FC_KNOWLEDGE_CHUNKS.length,
+      notas: FC_NOTAS_SEED.length,
+    })
+  })
+
   // ── POST /seed-ia — Claude gera base de conhecimento inicial ────────────
   // Cria SWOT, segmentos, decisões, timeline e notas estratégicas a partir
   // do perfil da campanha. Ideal para demo ou onboarding de novo marketeiro.
@@ -344,11 +412,26 @@ async function obsidianRoutes(fastify, opts) {
       console.log(`[obsidian seed-ia] force-reseed: limpando dados anteriores da campanha ${cid}`)
     }
 
-    reply.status(202).send({ mensagem: 'Gerando base de conhecimento com IA. Aguarde 15-30s e recarregue o grafo.' })
+    reply.status(202).send({ mensagem: 'Alimentando a rede neural… Aguarde 30-60s e recarregue o grafo.' })
 
     // Geração assíncrona após retornar 202
     setImmediate(async () => {
       try {
+        // ── 0. Garante que o Segundo Cérebro do FC está carregado primeiro ──────
+        const { count: kExist } = await supabase
+          .from('knowledge_chunks').select('id', { count: 'exact', head: true })
+          .eq('campaign_id', cid)
+        if ((kExist || 0) < 10) {
+          const { error: kErr } = await supabase.from('knowledge_chunks').insert(
+            FC_KNOWLEDGE_CHUNKS.map(k => ({
+              campaign_id: cid, title: k.title, source: k.source, chapter: k.chapter,
+              content: k.content, tags: k.tags, tipo: k.tipo, relevancia: k.relevancia,
+            }))
+          )
+          if (kErr) console.error('[seed-ia] FC chunks load error:', kErr.message)
+          else console.log(`[seed-ia] FC knowledge_chunks carregados: ${FC_KNOWLEDGE_CHUNKS.length}`)
+        }
+
         const nome   = campaign.name
         const cargo  = campaign.cargo  || 'vereador'
         const cidade = campaign.city   || 'cidade'
