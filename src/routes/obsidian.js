@@ -324,15 +324,24 @@ async function obsidianRoutes(fastify, opts) {
 
     const cid = campaign.id
 
-    // Verifica se já tem dados (evita re-seed)
+    // ?force=true permite re-seed mesmo com dados existentes (limpa e regera)
+    const forceReseed = request.query?.force === 'true'
+
     const { count: existente } = await supabase
       .from('obsidian_notas')
       .select('id', { count: 'exact', head: true })
       .eq('campaign_id', cid)
       .eq('gerada_ia', true)
 
-    if ((existente || 0) > 3) {
+    if ((existente || 0) > 3 && !forceReseed) {
       return { mensagem: 'Base de conhecimento já populada', pulado: true }
+    }
+
+    // force=true: apaga notas_ia e knowledge_chunks anteriores para regenerar limpo
+    if (forceReseed && (existente || 0) > 0) {
+      await supabase.from('obsidian_notas').delete().eq('campaign_id', cid).eq('gerada_ia', true)
+      await supabase.from('knowledge_chunks').delete().eq('campaign_id', cid)
+      console.log(`[obsidian seed-ia] force-reseed: limpando dados anteriores da campanha ${cid}`)
     }
 
     reply.status(202).send({ mensagem: 'Gerando base de conhecimento com IA. Aguarde 15-30s e recarregue o grafo.' })
