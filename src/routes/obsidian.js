@@ -44,12 +44,17 @@ async function obsidianRoutes(fastify, opts) {
 
     const [decisoes, swot, conteudos, segmentos, monitoramento, estrategia, notas, knowledge] =
       await Promise.all([
-        supabase.from('decisoes').select('id, titulo, descricao, tags, created_at').eq('campaign_id', cid).limit(60),
-        supabase.from('swot_items').select('id, quadrante, descricao, tags').eq('campaign_id', cid),
+        // decisoes: correct column is 'contexto' (not 'descricao'), no 'tags'
+        supabase.from('decisoes').select('id, titulo, contexto, created_at').eq('campaign_id', cid).limit(60),
+        // swot_items: no 'tags' column
+        supabase.from('swot_items').select('id, quadrante, descricao').eq('campaign_id', cid),
         supabase.from('content_items').select('id, tipo, titulo, status, tags').eq('campaign_id', cid).in('status', ['aprovado','gerado']).limit(40),
-        supabase.from('segmentos').select('id, nome, descricao, tags').eq('campaign_id', cid),
+        // segmentos: no 'descricao'/'tags' columns — use 'criterios' (jsonb)
+        supabase.from('segmentos').select('id, nome, criterios').eq('campaign_id', cid),
         supabase.from('monitoring_events').select('id, topicos, sentiment, resumo').eq('campaign_id', cid).not('topicos', 'is', null).limit(60),
-        supabase.from('timeline_estrategia').select('id, fase, descricao, objetivos').eq('campaign_id', cid),
+        // timeline_estrategia: no 'fase'/'descricao'/'objetivos' — use 'semana' + 'acoes' (jsonb)
+        supabase.from('timeline_estrategia').select('id, semana, acoes').eq('campaign_id', cid),
+        // obsidian_notas: 'gerada_ia' added via migration 007
         supabase.from('obsidian_notas').select('id, titulo, corpo, tags, gerada_ia').eq('campaign_id', cid),
         supabase.from('knowledge_chunks').select('id, title, source, chapter, tags, tipo, relevancia, content').eq('campaign_id', cid).order('relevancia', { ascending: false }).limit(50),
       ])
@@ -68,17 +73,17 @@ async function obsidianRoutes(fastify, opts) {
     // Decisões estratégicas
     ;(decisoes.data ?? []).forEach(d => nodes.push({
       id: `decisao-${d.id}`, label: d.titulo, type: 'decisao',
-      weight: 5, color: '#f59e0b', tags: d.tags ?? [],
-      meta: { descricao: d.descricao, data: d.created_at },
+      weight: 5, color: '#f59e0b', tags: [],
+      meta: { descricao: d.contexto, data: d.created_at },
     }))
 
     // SWOT
     const swotColors = { forca: '#10b981', fraqueza: '#ef4444', oportunidade: '#3b82f6', ameaca: '#f97316' }
     ;(swot.data ?? []).forEach(s => nodes.push({
       id: `swot-${s.id}`,
-      label: (s.descricao ?? '').slice(0, 55) + (s.descricao?.length > 55 ? '…' : ''),
+      label: (s.descricao ?? '').slice(0, 55) + ((s.descricao?.length ?? 0) > 55 ? '…' : ''),
       type: `swot_${s.quadrante}`, weight: 3,
-      color: swotColors[s.quadrante] ?? '#94a3b8', tags: s.tags ?? [],
+      color: swotColors[s.quadrante] ?? '#94a3b8', tags: [],
     }))
 
     // Conteúdos aprovados
@@ -88,11 +93,11 @@ async function obsidianRoutes(fastify, opts) {
       meta: { tipo: c.tipo, status: c.status },
     }))
 
-    // Segmentos eleitorais
+    // Segmentos eleitorais — criterios is jsonb { descricao, prioridade, tamanho, tags }
     ;(segmentos.data ?? []).forEach(s => nodes.push({
       id: `segmento-${s.id}`, label: s.nome, type: 'segmento',
-      weight: 4, color: '#06b6d4', tags: s.tags ?? [],
-      meta: { descricao: s.descricao },
+      weight: 4, color: '#06b6d4', tags: s.criterios?.tags ?? [],
+      meta: { descricao: s.criterios?.descricao, prioridade: s.criterios?.prioridade },
     }))
 
     // Tópicos de monitoramento (agrupados)
@@ -119,11 +124,11 @@ async function obsidianRoutes(fastify, opts) {
         })
       })
 
-    // Timeline estratégica
+    // Timeline estratégica — acoes is jsonb { fase, descricao, objetivos, periodo }
     ;(estrategia.data ?? []).forEach(e => nodes.push({
-      id: `estrategia-${e.id}`, label: e.fase, type: 'estrategia',
+      id: `estrategia-${e.id}`, label: e.acoes?.fase ?? `Fase ${e.semana}`, type: 'estrategia',
       weight: 6, color: '#ec4899',
-      meta: { descricao: e.descricao, objetivos: e.objetivos },
+      meta: { descricao: e.acoes?.descricao, objetivos: e.acoes?.objetivos, periodo: e.acoes?.periodo },
     }))
 
     // Notas estratégicas (manuais + IA)
