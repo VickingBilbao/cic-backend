@@ -348,94 +348,92 @@ async function obsidianRoutes(fastify, opts) {
         const numero  = campaign.numero_urna || '00000'
 
         // ── 1. Gera SWOT completo ──────────────────────────────────────────
-        const swotRes = await anthropic.messages.create({
-          model:      'claude-sonnet-4-6',
-          max_tokens: 2000,
-          system: `Você é um estrategista político especializado em campanhas brasileiras.
+        try {
+          const swotRes = await anthropic.messages.create({
+            model:      'claude-sonnet-4-6',
+            max_tokens: 2000,
+            system: `Você é um estrategista político especializado em campanhas brasileiras.
 Retorne SOMENTE JSON válido. Sem markdown.`,
-          messages: [{
-            role: 'user',
-            content: `Campanha: ${nome} | ${cargo} | ${cidade}-${estado} | ${partido} ${numero}
+            messages: [{
+              role: 'user',
+              content: `Campanha: ${nome} | ${cargo} | ${cidade}-${estado}
 
-Gere uma análise SWOT estratégica detalhada com o seguinte JSON:
-{
-  "forcas": [{"descricao": "...", "tags": ["..."]}] (4 itens),
-  "fraquezas": [{"descricao": "...", "tags": ["..."]}] (3 itens),
-  "oportunidades": [{"descricao": "...", "tags": ["..."]}] (4 itens),
-  "ameacas": [{"descricao": "...", "tags": ["..."]}] (3 itens)
-}
-Seja específico para candidatos a ${cargo} no Brasil, contexto 2026.`,
-          }],
-        })
-
-        const swotData = JSON.parse(swotRes.content[0].text.replace(/```json\n?|\n?```/g, '').trim())
-        const swotItems = [
-          ...(swotData.forcas || []).map(f => ({ ...f, quadrante: 'forca' })),
-          ...(swotData.fraquezas || []).map(f => ({ ...f, quadrante: 'fraqueza' })),
-          ...(swotData.oportunidades || []).map(f => ({ ...f, quadrante: 'oportunidade' })),
-          ...(swotData.ameacas || []).map(f => ({ ...f, quadrante: 'ameaca' })),
-        ]
-        if (swotItems.length) {
-          await supabase.from('swot_items').insert(
-            // swot_items: campaign_id, quadrante, descricao, peso (sem tags)
-            swotItems.map(s => ({ campaign_id: cid, quadrante: s.quadrante, descricao: s.descricao, peso: 5 }))
-          )
-        }
+Gere análise SWOT. JSON:
+{"forcas":[{"descricao":"..."}],"fraquezas":[{"descricao":"..."}],"oportunidades":[{"descricao":"..."}],"ameacas":[{"descricao":"..."}]}
+4 forças, 3 fraquezas, 4 oportunidades, 3 ameaças. Contexto ${cargo} Brasil 2026.`,
+            }],
+          })
+          const swotData = JSON.parse(swotRes.content[0].text.replace(/```json\n?|\n?```/g, '').trim())
+          const swotItems = [
+            ...(swotData.forcas || []).map(f => ({ ...f, quadrante: 'forca' })),
+            ...(swotData.fraquezas || []).map(f => ({ ...f, quadrante: 'fraqueza' })),
+            ...(swotData.oportunidades || []).map(f => ({ ...f, quadrante: 'oportunidade' })),
+            ...(swotData.ameacas || []).map(f => ({ ...f, quadrante: 'ameaca' })),
+          ]
+          if (swotItems.length) {
+            const { error: sErr } = await supabase.from('swot_items').insert(
+              swotItems.map(s => ({ campaign_id: cid, quadrante: s.quadrante, descricao: s.descricao, peso: 5 }))
+            )
+            if (sErr) console.error('[seed-ia] swot insert error:', sErr.message)
+            else console.log(`[seed-ia] swot inserido: ${swotItems.length} itens`)
+          }
+        } catch (e) { console.error('[seed-ia] step 1 SWOT erro:', e.message) }
 
         // ── 2. Gera segmentos eleitorais ───────────────────────────────────
-        const segRes = await anthropic.messages.create({
-          model:      'claude-haiku-4-5-20251001',
-          max_tokens: 1200,
-          system: 'Retorne SOMENTE JSON válido.',
-          messages: [{
-            role: 'user',
-            content: `Campanha: ${nome} | ${cargo} | ${cidade}-${estado}
+        try {
+          const segRes = await anthropic.messages.create({
+            model:      'claude-haiku-4-5-20251001',
+            max_tokens: 1200,
+            system: 'Retorne SOMENTE JSON válido.',
+            messages: [{
+              role: 'user',
+              content: `Campanha: ${nome} | ${cargo} | ${cidade}-${estado}
 
-Gere 5 segmentos eleitorais estratégicos. JSON:
-[{"nome":"...", "descricao":"...", "tamanho_estimado":"...", "prioridade":"alta|media|baixa", "tags":["..."]}]
-Considere: donas de casa, idosos, jovens, trabalhadores, comerciantes, etc. Adapte para ${cargo} em ${cidade}.`,
-          }],
-        })
-
-        const segData = JSON.parse(segRes.content[0].text.replace(/```json\n?|\n?```/g, '').trim())
-        if (Array.isArray(segData)) {
-          // segmentos: campaign_id, nome, criterios (jsonb), total_eleitores
-          await supabase.from('segmentos').insert(
-            segData.map(s => ({
-              campaign_id:    cid,
-              nome:           s.nome,
-              criterios:      { descricao: s.descricao, prioridade: s.prioridade, tamanho: s.tamanho_estimado, tags: s.tags || [] },
-              total_eleitores: 0,
-            }))
-          )
-        }
+5 segmentos eleitorais. JSON:
+[{"nome":"...","descricao":"...","tamanho_estimado":"...","prioridade":"alta|media|baixa","tags":["..."]}]`,
+            }],
+          })
+          const segData = JSON.parse(segRes.content[0].text.replace(/```json\n?|\n?```/g, '').trim())
+          if (Array.isArray(segData)) {
+            const { error: sgErr } = await supabase.from('segmentos').insert(
+              segData.map(s => ({
+                campaign_id: cid, nome: s.nome,
+                criterios:   { descricao: s.descricao, prioridade: s.prioridade, tamanho: s.tamanho_estimado, tags: s.tags || [] },
+                total_eleitores: 0,
+              }))
+            )
+            if (sgErr) console.error('[seed-ia] segmentos insert error:', sgErr.message)
+            else console.log(`[seed-ia] segmentos inseridos: ${segData.length}`)
+          }
+        } catch (e) { console.error('[seed-ia] step 2 segmentos erro:', e.message) }
 
         // ── 3. Gera timeline estratégica ───────────────────────────────────
-        const timeRes = await anthropic.messages.create({
-          model:      'claude-haiku-4-5-20251001',
-          max_tokens: 1500,
-          system: 'Retorne SOMENTE JSON válido.',
-          messages: [{
-            role: 'user',
-            content: `Campanha: ${nome} | ${cargo} | Eleição: outubro/2026
+        try {
+          const timeRes = await anthropic.messages.create({
+            model:      'claude-haiku-4-5-20251001',
+            max_tokens: 1500,
+            system: 'Retorne SOMENTE JSON válido.',
+            messages: [{
+              role: 'user',
+              content: `Campanha: ${nome} | ${cargo} | Eleição: outubro/2026
 
-Gere 4 fases da campanha. JSON:
-[{"fase":"...", "descricao":"...", "objetivos":["...", "..."], "periodo":"..."}]
+4 fases da campanha. JSON:
+[{"fase":"...","descricao":"...","objetivos":["...","..."],"periodo":"..."}]
 Fases: Construção de base → Expansão → Intensificação → Reta final.`,
-          }],
-        })
-
-        const timeData = JSON.parse(timeRes.content[0].text.replace(/```json\n?|\n?```/g, '').trim())
-        if (Array.isArray(timeData)) {
-          // timeline_estrategia: campaign_id, semana (int), acoes (jsonb)
-          await supabase.from('timeline_estrategia').insert(
-            timeData.map((t, i) => ({
-              campaign_id: cid,
-              semana:      (i + 1) * 10,
-              acoes:       { fase: t.fase, descricao: t.descricao, objetivos: t.objetivos || [], periodo: t.periodo },
-            }))
-          )
-        }
+            }],
+          })
+          const timeData = JSON.parse(timeRes.content[0].text.replace(/```json\n?|\n?```/g, '').trim())
+          if (Array.isArray(timeData)) {
+            const { error: tErr } = await supabase.from('timeline_estrategia').insert(
+              timeData.map((t, i) => ({
+                campaign_id: cid, semana: (i + 1) * 10,
+                acoes: { fase: t.fase, descricao: t.descricao, objetivos: t.objetivos || [], periodo: t.periodo },
+              }))
+            )
+            if (tErr) console.error('[seed-ia] timeline insert error:', tErr.message)
+            else console.log(`[seed-ia] timeline inserida: ${timeData.length} fases`)
+          }
+        } catch (e) { console.error('[seed-ia] step 3 timeline erro:', e.message) }
 
         // ── 4. Gera notas estratégicas de conhecimento ─────────────────────
         // NOTE: max_tokens=5000 para acomodar 8 notas com corpo de 1-2 parágrafos
@@ -516,35 +514,37 @@ IMPORTANTE: "chapter" deve ser número inteiro (1-6). "relevancia" deve ser núm
         }
 
         // ── 6. Gera decisões estratégicas iniciais ─────────────────────────
-        const decisoesRes = await anthropic.messages.create({
-          model:      'claude-haiku-4-5-20251001',
-          max_tokens: 1200,
-          system: 'Retorne SOMENTE JSON válido.',
-          messages: [{
-            role: 'user',
-            content: `Campanha: ${nome} | ${cargo} | ${cidade}-${estado}
+        try {
+          const decisoesRes = await anthropic.messages.create({
+            model:      'claude-haiku-4-5-20251001',
+            max_tokens: 1200,
+            system: 'Retorne SOMENTE JSON válido.',
+            messages: [{
+              role: 'user',
+              content: `Campanha: ${nome} | ${cargo} | ${cidade}-${estado}
 
-Gere 5 decisões estratégicas aprovadas que definem a campanha. JSON:
-[{"titulo":"...", "descricao":"...", "status":"aprovada", "tags":["..."]}]
-Decisões sobre: posicionamento, tom de comunicação, foco geográfico, coligações, prioridade de pauta.`,
-          }],
-        })
+5 decisões estratégicas aprovadas. JSON:
+[{"titulo":"...","descricao":"...","status":"aprovada"}]
+Sobre: posicionamento, tom, foco geográfico, coligações, pauta.`,
+            }],
+          })
+          const decisoesData = JSON.parse(decisoesRes.content[0].text.replace(/```json\n?|\n?```/g, '').trim())
+          if (Array.isArray(decisoesData)) {
+            const { error: dErr } = await supabase.from('decisoes').insert(
+              decisoesData.map(d => ({
+                campaign_id:     cid,
+                titulo:          d.titulo,
+                contexto:        d.descricao || d.contexto || '',
+                recomendacao_ia: d.recomendacao || d.recomendacao_ia || d.descricao || '',
+                status:          'aprovada',
+              }))
+            )
+            if (dErr) console.error('[seed-ia] decisoes insert error:', dErr.message)
+            else console.log(`[seed-ia] decisoes inseridas: ${decisoesData.length}`)
+          }
+        } catch (e) { console.error('[seed-ia] step 6 decisoes erro:', e.message) }
 
-        const decisoesData = JSON.parse(decisoesRes.content[0].text.replace(/```json\n?|\n?```/g, '').trim())
-        if (Array.isArray(decisoesData)) {
-          // decisoes: campaign_id, titulo, contexto (not descricao), recomendacao_ia, status
-          await supabase.from('decisoes').insert(
-            decisoesData.map(d => ({
-              campaign_id:    cid,
-              titulo:         d.titulo,
-              contexto:       d.descricao || d.contexto || '',
-              recomendacao_ia: d.recomendacao || d.recomendacao_ia || d.descricao || '',
-              status:         'aprovada',
-            }))
-          )
-        }
-
-        console.log(`[obsidian seed-ia] Campanha ${cid} — base gerada com sucesso`)
+        console.log(`[obsidian seed-ia] Campanha ${cid} — seed concluído`)
       } catch (err) {
         console.error('[obsidian seed-ia] Erro na geração:', err.message)
       }
