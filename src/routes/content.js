@@ -121,14 +121,11 @@ export default async function contentRoutes(fastify) {
             .from('content_items')
             .insert({
               campaign_id,
-              agent:    payload.agente,
-              type:     payload.tipo,
-              titulo:   payload.parametros?.titulo || `${payload.tipo} — ${new Date().toLocaleDateString('pt-BR')}`,
-              prompt:   payload.prompt,
-              output:   fullText,
-              status:   'pending',
-              tokens:   usage?.output_tokens || 0,
-              model,
+              agent:  payload.agente,
+              type:   payload.tipo,
+              prompt: payload.prompt,
+              output: fullText,
+              status: 'pending',
             })
             .select()
             .single()
@@ -165,7 +162,7 @@ export default async function contentRoutes(fastify) {
   }, async (req, reply) => {
     const { status, agente, tipo, page = 1, limit = 20 } = req.query
     let query = fastify.supabase.from('content_items')
-      .select('id, type, agent, titulo, status, tokens, model, created_at', { count: 'exact' })
+      .select('id, type, agent, status, created_at', { count: 'exact' })
       .eq('campaign_id', req.params.campaignId)
       .order('created_at', { ascending: false })
       .range((page - 1) * limit, page * limit - 1)
