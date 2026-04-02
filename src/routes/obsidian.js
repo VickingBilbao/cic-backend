@@ -347,6 +347,11 @@ async function obsidianRoutes(fastify, opts) {
         const partido = campaign.partido || 'partido'
         const numero  = campaign.numero_urna || '00000'
 
+        // Busca nome do marketeiro para personalizar os prompts
+        const { data: marketerProfile } = await supabase
+          .from('profiles').select('name').eq('id', request.user.sub).single()
+        const marketerName = marketerProfile?.name || 'o marketeiro'
+
         // ── 1. Gera SWOT completo ──────────────────────────────────────────
         try {
           const swotRes = await anthropic.messages.create({
@@ -435,20 +440,34 @@ Fases: Construção de base → Expansão → Intensificação → Reta final.`,
           }
         } catch (e) { console.error('[seed-ia] step 3 timeline erro:', e.message) }
 
-        // ── 4. Gera notas estratégicas de conhecimento ─────────────────────
-        // NOTE: max_tokens=5000 para acomodar 8 notas com corpo de 1-2 parágrafos
+        // ── 4. Notas do segundo cérebro — como o marketeiro pensa nesta campanha ──
+        // Framing: insights pessoais do marketeiro aplicados a esta campanha,
+        // não análise genérica. Voz: primeira pessoa / perspectiva profissional.
         const notasRes = await anthropic.messages.create({
           model:      'claude-sonnet-4-6',
           max_tokens: 5000,
-          system: 'Retorne SOMENTE JSON válido. Sem markdown. Seja conciso nos campos "corpo" (máx 150 palavras cada).',
+          system: `Você está construindo o segundo cérebro de ${marketerName}, especialista em marketing político brasileiro.
+Sua tarefa: gerar anotações que capturem o raciocínio, diagnóstico e intuição profissional deste marketeiro.
+Escreva como se fossem notas pessoais do profissional — o que ele observa, como ele interpreta, que padrão ele reconhece.
+Retorne SOMENTE JSON válido. Sem markdown. Corpo: máx 150 palavras por nota.`,
           messages: [{
             role: 'user',
             content: `Campanha: ${nome} | ${cargo} | ${cidade}-${estado} | ${partido}
 
-Gere 8 notas estratégicas para a campanha. JSON COMPACTO (corpo: máx 150 palavras):
-[{"titulo":"...","corpo":"...","tags":["...","...","..."]}]
+Gere 8 notas que representam como ${marketerName} pensa sobre esta campanha.
+Cada nota deve soar como um insight do próprio marketeiro — específico, profissional, com seu ponto de vista.
 
-Temas: 1.Contexto político ${cidade}/${estado} 2.Perfil eleitor ${cargo} 3.Mensagem central 4.Comunicação digital 5.Vulnerabilidades 6.Oportunidades 7.Engajamento comunitário 8.Benchmarks`,
+JSON: [{"titulo":"...","corpo":"...","tags":["...","...","..."]}]
+
+Ângulos obrigatórios (um por nota):
+1. Leitura do território: o que este cidade/região tem de específico que muda a estratégia
+2. Diagnóstico do eleitorado: quem de fato decide esta eleição e por quê
+3. Posicionamento central: a aposta de comunicação que vai diferenciar este candidato
+4. Risco principal que vejo: o que pode fazer essa campanha perder
+5. Oportunidade que poucos estão enxergando neste contexto
+6. Como vou trabalhar presença digital aqui (não genérico — específico para este perfil)
+7. Segmento prioritário e por que aposto nele
+8. Padrão que reconheço: algo que já vi funcionar em campanhas similares e vou aplicar aqui`,
           }],
         })
 
@@ -471,21 +490,35 @@ Temas: 1.Contexto político ${cidade}/${estado} 2.Perfil eleitor ${cargo} 3.Mens
           console.error('[obsidian seed-ia] notas JSON parse error:', parseErr.message)
         }
 
-        // ── 5. Gera knowledge_chunks (base de referência geral) ────────────
-        // NOTE: max_tokens=5000 para acomodar 6 chunks densos
+        // ── 5. Knowledge chunks — frameworks e modelos mentais do marketeiro ──
+        // CRUCIAL: estes não são dados da campanha — são o CONHECIMENTO que o
+        // marketeiro traz para qualquer campanha. A expertise acumulada dele.
         const knowledgeRes = await anthropic.messages.create({
           model:      'claude-sonnet-4-6',
           max_tokens: 5000,
-          system: 'Retorne SOMENTE JSON válido. Seja conciso (content: máx 200 palavras cada).',
+          system: `Você está mapeando a inteligência de mercado de ${marketerName}, especialista em marketing político brasileiro.
+Sua tarefa: extrair os frameworks, modelos mentais e metodologias que este profissional domina.
+IMPORTANTE: não analise a campanha — mapeie o CONHECIMENTO que o profissional traz para qualquer campanha.
+Cada chunk é um conceito que vive na cabeça do marketeiro, independente de qual candidato está trabalhando.
+Retorne SOMENTE JSON válido. Conteúdo conciso e denso (máx 200 palavras cada).`,
           messages: [{
             role: 'user',
-            content: `Campanha: ${nome} | ${cargo} | ${cidade}-${estado}
+            content: `Contexto de atuação: ${marketerName} trabalha com ${cargo} em cidades como ${cidade}-${estado}.
 
-Gere 6 knowledge chunks estratégicos. JSON COMPACTO:
-[{"title":"...","source":"Estratégia Política Brasileira","chapter":1,"content":"...","tags":["..."],"tipo":"estrategia","relevancia":7}]
+Gere 6 nós de conhecimento que representam a inteligência acumulada deste marketeiro.
+Pense: o que um profissional experiente em campanhas deste perfil TEM NA CABEÇA que o diferencia?
 
-Temas: marketing político, comunicação eleitoral, mobilização de base, análise de oponentes, gestão de crises, GOTV Brasil.
-IMPORTANTE: "chapter" deve ser número inteiro (1-6). "relevancia" deve ser número inteiro (1-10).`,
+JSON: [{"title":"...","source":"Inteligência ${marketerName}","chapter":1,"content":"...","tags":["..."],"tipo":"framework|metodologia|diagnostico|experiencia","relevancia":8}]
+
+Domínios obrigatórios (um por chunk):
+1. Framework de diagnóstico de eleitorado: como lê rapidamente um mercado eleitoral novo
+2. Modelo de posicionamento: como decide a aposta de comunicação de um candidato
+3. Metodologia de segmentação: como identifica e prioriza grupos de eleitores
+4. Gestão de crise eleitoral: como age quando a campanha entra em turbulência
+5. Inteligência competitiva: como analisa adversários e antecipa movimentos
+6. Lições de campanhas anteriores: padrões aprendidos que informam decisões
+
+IMPORTANTE: "chapter" número inteiro (1-6). "relevancia" número inteiro (1-10).`,
           }],
         })
 
